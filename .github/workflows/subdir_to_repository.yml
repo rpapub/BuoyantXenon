@@ -17,8 +17,12 @@ jobs:
 
       - name: Checkout Repository
         uses: actions/checkout@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN_CPRIMA_FOR_RPAPUB }}
 
       - name: Run Subdir to Repository Script
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN_CPRIMA_FOR_RPAPUB }}
         run: |
           chmod +x subdir_to_repository.sh
           ./subdir_to_repository.sh
