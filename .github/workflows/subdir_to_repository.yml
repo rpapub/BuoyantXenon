@@ -1,0 +1,20 @@
+name: Subdir to Repository
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "59 4 * * *" #daily (UTC)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Run Subdir to Repository Script
+      run: |
+        chmod +x subdir_to_repository.sh
+        ./subdir_to_repository.sh
+
