@@ -10,11 +10,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v3
+      - name: Install git-filter-repo
+        run: |
+            sudo apt-get update
+            sudo apt-get install -y git-filter-repo
 
-    - name: Run Subdir to Repository Script
-      run: |
-        chmod +x subdir_to_repository.sh
-        ./subdir_to_repository.sh
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Run Subdir to Repository Script
+        run: |
+          chmod +x subdir_to_repository.sh
+          ./subdir_to_repository.sh
 
