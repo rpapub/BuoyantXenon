@@ -1,0 +1,32 @@
+name: GitHub actions tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install git-filter-repo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-filter-repo
+
+      - name: Push to Repositories
+        env:
+          TOKEN: ${{ secrets.TOKEN_CPRIMA_FOR_RPAPUB }}
+        run: |
+          repos=("rpapub/REFramework-VB-legacy" "rpapub/REFramework-CSharp-legacy" "rpapub/REFramework-VB-Windows" "rpapub/REFramework-CSharp-Windows")
+          for repo in "${repos[@]}"
+          do
+            git clone https://x-access-token:$TOKEN@github.com/$repo
+            cd $(basename $repo)
+            git config user.email "actions@github.com"
+            git config user.name "GitHub Actions"
+            echo "$(date)" > testfile.txt
+            git add testfile.txt
+            git commit -m "Test commit"
+            git push
+            cd ..
+          done
