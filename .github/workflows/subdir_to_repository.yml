@@ -6,7 +6,7 @@ on:
     - cron: "59 4 * * *" #daily (UTC)
 
 jobs:
-  build:
+  perform-subdir-to-repository:
     runs-on: ubuntu-latest
 
     steps:
