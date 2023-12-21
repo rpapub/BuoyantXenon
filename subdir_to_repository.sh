@@ -98,7 +98,7 @@ while read remote_branch; do
 
             # Push the changes to the remote target repository
             log "Pushing branch $branch to the remote target repository..."
-            git push origin "$branch"
+            #git push origin "$branch"
 
             # Switch back to the non-bare source repository to continue
             cd "$TEMP_DIR/source_repo_non_bare"

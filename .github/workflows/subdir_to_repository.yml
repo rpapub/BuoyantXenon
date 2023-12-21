@@ -18,11 +18,3 @@ jobs:
         chmod +x subdir_to_repository.sh
         ./subdir_to_repository.sh
 
-    - name: Push to Repository
-      run: |
-        git config --global user.email "actions@github.com"
-        git config --global user.name "GitHub Actions"
-        git add .
-        git commit -m "Automated update"
-        git push https://${{ secrets.TOKEN_CPRIMA_FOR_RPAPUB }}@github.com/your-org/your-repo.git HEAD:main
-
