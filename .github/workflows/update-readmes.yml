@@ -46,9 +46,9 @@ jobs:
               # Replace the content between the markers
               if [ -n "$start_line" ] && [ -n "$end_line" ]; then
                   # Delete the content between the markers, but leave the markers
-                  sed -i "${start_line}+1,${end_line}-1d" README.md
+                  sed -i "${start_line},$((${end_line}-1))d" README.md
                   # Insert new content after the start marker
-                  sed -i "${start_line}a $new_content" README.md
+                  awk -v n="$start_line" -v content="$new_content" 'NR == n+1 {print content} {print}' README.md > README.tmp && mv README.tmp README.md
               else
                   echo -e "\n$PRE_COMMENT\n$new_content\n$POST_COMMENT" >> README.md
               fi
