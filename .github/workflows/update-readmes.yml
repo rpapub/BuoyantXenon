@@ -24,43 +24,32 @@ jobs:
           repos=("rpapub/REFramework-VB-legacy" "rpapub/REFramework-CSharp-legacy" "rpapub/REFramework-VB-Windows" "rpapub/REFramework-CSharp-Windows")
           PRE_COMMENT="<!-- START OF AUTO-GENERATED CONTENT -->"
           POST_COMMENT="<!-- END OF AUTO-GENERATED CONTENT -->"
-
           for repo in "${repos[@]}"; do
               echo "Updating README for $repo"
-              ls
-              sleep 5
               git clone https://x-access-token:$GITHUB_TOKEN@github.com/$repo "$(basename $repo)"
               cd "$(basename $repo)"
-              pwd
-
               git checkout readme || git checkout -b readme
               branches=$(git branch -r | grep 'release/v')
               
-              new_content="$PRE_COMMENT\n# Release Branches\n"
+              new_content=""
               for branch in $branches; do
-                  # Remove the remote part (e.g., origin/) and keep the branch name
                   branch_name="${branch#*/}"
                   new_content+="- [$branch_name](https://github.com/$repo/tree/$branch_name)\n"
               done
-              new_content+="$POST_COMMENT"
 
-              echo "$new_content"
-              if grep -q "$PRE_COMMENT" README.md; then
-                  echo "previous content detected, will try to replace"
-                  awk -v new_content="$new_content" '
-                      BEGIN { skip = 0 }
-                      /<!-- START OF AUTO-GENERATED CONTENT -->/ { print; print new_content; skip = 1 }
-                      /<!-- END OF AUTO-GENERATED CONTENT -->/ { skip = 0; next }
-                      skip { next }
-                      { print }
-                  ' README.md > README.tmp && mv README.tmp README.md
+              # Find the line numbers of the comment markers
+              start_line=$(grep -n "$PRE_COMMENT" README.md | cut -d: -f1)
+              end_line=$(grep -n "$POST_COMMENT" README.md | cut -d: -f1)
+
+              # Replace the content between the markers
+              if [ -n "$start_line" ] && [ -n "$end_line" ]; then
+                  sed -i "${start_line},${end_line}d" README.md
+                  sed -i "${start_line}i $PRE_COMMENT\n$new_content\n$POST_COMMENT" README.md
               else
-                  echo "no previous content detected, appending to README"
-                  echo -e "\n$new_content" >> README.md
+                  echo -e "\n$PRE_COMMENT\n$new_content\n$POST_COMMENT" >> README.md
               fi
-              cat README.md
+
               git add README.md
-              # Check for changes
               if git diff --staged --quiet; then
                   echo "No changes to commit."
               else
@@ -68,8 +57,5 @@ jobs:
                   git commit -m "$COMMIT_MSG"
                   git push -u origin readme
               fi
-              git push -u origin readme
-
               cd ..
           done
-          rm -rf "$TEMP_DIR"
