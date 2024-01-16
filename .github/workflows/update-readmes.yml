@@ -46,7 +46,9 @@ jobs:
               # Replace the content between the markers
               if [ -n "$start_line" ] && [ -n "$end_line" ]; then
                   sed -i "${start_line},${end_line}d" README.md
-                  sed -i "${start_line}i $PRE_COMMENT\n$new_content\n$POST_COMMENT" README.md
+                  sed -i "${start_line}i $PRE_COMMENT" README.md
+                  sed -i "$((start_line + 1))i $new_content" README.md
+                  sed -i "$((start_line + 2))i $POST_COMMENT" README.md
               else
                   echo -e "\n$PRE_COMMENT\n$new_content\n$POST_COMMENT" >> README.md
               fi
