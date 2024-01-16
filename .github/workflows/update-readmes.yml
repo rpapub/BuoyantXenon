@@ -30,12 +30,14 @@ jobs:
               cd "$(basename $repo)"
               git checkout readme || git checkout -b readme
               branches=$(git branch -r | grep 'release/v')
+              echo $branches
               
               new_content=""
               for branch in $branches; do
                   branch_name="${branch#*/}"
                   new_content+="- [$branch_name](https://github.com/$repo/tree/$branch_name)\n"
               done
+              echo $new_content
 
               # Find the line numbers of the comment markers
               start_line=$(grep -n "$PRE_COMMENT" README.md | cut -d: -f1)
