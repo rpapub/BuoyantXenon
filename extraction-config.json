@@ -1,0 +1,10 @@
+{
+  "source_repo": "https://github.com/UiPath-Services/StudioTemplates.git",
+  "target_owner": "rpapub",
+  "mappings": [
+    { "subdir": "REFramework/contentFiles/any/any/pt0/VisualBasic", "repo": "REFramework-VB-legacy" },
+    { "subdir": "REFramework/contentFiles/any/any/pt1/CSharp", "repo": "REFramework-CSharp-legacy" },
+    { "subdir": "REFramework/contentFiles/any/any/pt2/VisualBasic", "repo": "REFramework-VB-Windows" },
+    { "subdir": "REFramework/contentFiles/any/any/pt3/CSharp", "repo": "REFramework-CSharp-Windows" }
+  ]
+}

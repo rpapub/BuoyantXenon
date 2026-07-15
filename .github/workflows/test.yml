@@ -1,32 +1,36 @@
-name: GitHub actions tests
+name: Verify Script and Push Access
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install git-filter-repo
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y git-filter-repo
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Push to Repositories
-        env:
-          GITHUB_TOKEN: ${{ secrets.TOKEN_CPRIMA_FOR_RPAPUB }}
+      - name: Lint shell scripts
         run: |
-          repos=("rpapub/REFramework-VB-legacy" "rpapub/REFramework-CSharp-legacy" "rpapub/REFramework-VB-Windows" "rpapub/REFramework-CSharp-Windows")
-          for repo in "${repos[@]}"
-          do
-            git clone https://x-access-token:$GITHUB_TOKEN@github.com/$repo
-            cd $(basename $repo)
-            git config user.email "actions@github.com"
-            git config user.name "GitHub Actions"
-            echo "$(date)" > testfile.txt
-            git add testfile.txt
-            git commit -m "Test commit"
-            git push
-            cd ..
+          bash -n subdir_to_repository.sh
+          bash -n danger.sh
+
+      - name: Validate extraction-config.json
+        run: jq empty extraction-config.json
+
+      - name: Check push access to target repos (no writes)
+        env:
+          GITHUB_TOKEN: ${{ secrets.RPAPUB_REF_CONTENTS_RW_PAT }}
+        run: |
+          repos=$(jq -r '.target_owner as $o | .mappings[].repo | "\($o)/\(.)"' extraction-config.json)
+          fail=0
+          for repo in $repos; do
+            push_access=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/$repo" | jq -r '.permissions.push // false')
+            echo "$repo: push access = $push_access"
+            [ "$push_access" = "true" ] || fail=1
           done
+          if [ "$fail" -ne 0 ]; then
+            echo "One or more target repos lack push access for RPAPUB_REF_CONTENTS_RW_PAT." >&2
+            exit 1
+          fi

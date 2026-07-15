@@ -1,7 +1,18 @@
 #!/bin/bash
+set -euo pipefail
 
 # Repository names
 repos=("rpapub/REFramework-VB-legacy" "rpapub/REFramework-CSharp-legacy" "rpapub/REFramework-VB-Windows" "rpapub/REFramework-CSharp-Windows")
+
+if [ "${1:-}" != "--yes" ]; then
+    echo "This PERMANENTLY DELETES and recreates these public repositories:"
+    printf '  - %s\n' "${repos[@]}"
+    read -r -p "Type the repo count (${#repos[@]}) to confirm: " confirm
+    if [ "$confirm" != "${#repos[@]}" ]; then
+        echo "Confirmation failed. Aborting."
+        exit 1
+    fi
+fi
 
 # Delete repositories
 for repo in "${repos[@]}"; do

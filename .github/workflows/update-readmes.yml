@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Git
         run: |
@@ -18,7 +18,7 @@ jobs:
 
       - name: Update README
         env:
-          GITHUB_TOKEN: ${{ secrets.TOKEN_CPRIMA_FOR_RPAPUB }}
+          GITHUB_TOKEN: ${{ secrets.RPAPUB_REF_CONTENTS_RW_PAT }}
         run: |
           cd "${{ runner.temp }}"
           repos=("rpapub/REFramework-VB-legacy" "rpapub/REFramework-CSharp-legacy" "rpapub/REFramework-VB-Windows" "rpapub/REFramework-CSharp-Windows")

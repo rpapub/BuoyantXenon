@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # UiPath Studio Template Extraction
 #
@@ -10,14 +11,17 @@
 #   (e.g., legacy/Windows and VB/CSharp) in an organized and efficient manner.
 #
 # Usage:
-#   Set the source repository, target repositories, and desired subdirectories.
-#   Run the script to clone the source, filter the specified subdirectories,
-#   and push them to the corresponding new repositories.
+#   Configure source repo, target owner and subdir->repo mappings in
+#   extraction-config.json, then run this script. Requires GITHUB_TOKEN
+#   in the environment and jq/git-filter-repo on PATH.
 #
 # Author: Christian Prior-Mamulyan
 # Date: 2023-12-21
 # Copyright: Christian Prior-Mamulyan, 2023
 # License: This script is released under the CC BY license.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/extraction-config.json}"
 
 log() {
     echo "[$(date +"%Y-%m-%d %H:%M:%S")] $1"
@@ -25,7 +29,7 @@ log() {
 
 debug_breakpoint() {
     echo "debug: $1"
-    current_branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+    current_branch=$(git symbolic-ref --short HEAD 2>/dev/null || true)
     if [ -n "$current_branch" ]; then
         echo "Current branch: $current_branch"
     else
@@ -35,81 +39,130 @@ debug_breakpoint() {
     read -r </dev/tty # Waits for the user to press Enter, reading specifically from the terminal
 }
 
-# Function to validate the results
+# Re-checks every (branch, subdir) pair the main loop recorded as pushed
+# successfully, confirming the branch actually exists in the target repo.
+# Only logs problems; silence is success.
 validate_results() {
-    log "Starting validation of results..."
+    local validation_failures=0
 
-    for branch in "${!subdirs[@]}"; do
-        # shellcheck disable=SC2066
-        for subdir in "${subdirs[$branch]}"; do
-            local target_repo_dir="$TEMP_DIR/$subdir"
-            local target_branch="release/$branch"
-            local target_subdir="${subdirs[$branch]}"
+    for key in "${!successes[@]}"; do
+        local release_branch="${key%%:*}"
+        local subdir_path="${key#*:}"
+        local target_repo_name="${subdir_to_repo[$subdir_path]}"
+        local target_repo_dir="$TEMP_DIR/$target_repo_name"
 
-            if [ ! -d "$target_repo_dir" ]; then
-                log "Validation failed: Target repository directory $target_repo_dir does not exist."
-                continue
-            fi
+        if [ ! -d "$target_repo_dir" ]; then
+            log "Validation failed: Target repository directory $target_repo_dir does not exist."
+            validation_failures=$((validation_failures + 1))
+            continue
+        fi
 
-            cd "$target_repo_dir" || exit
+        (cd "$target_repo_dir" && git fetch origin --quiet)
 
-            # Check if the branch exists and has the expected content
-            if git rev-parse --verify "$target_branch" >/dev/null 2>&1; then
-                log "Checking content in $target_repo_dir on branch $target_branch..."
-
-                # Fetch and check out the target branch
-                git fetch origin
-                git checkout "$target_branch"
-
-                # Check if the expected subdirectory exists in the target branch
-                if [ ! -d "$target_subdir" ]; then
-                    log "Validation failed: Subdirectory $target_subdir does not exist in branch $target_branch of $target_repo_dir."
-                else
-                    log "Validation successful: Subdirectory $target_subdir exists in branch $target_branch of $target_repo_dir."
-                fi
-            else
-                log "Validation failed: Branch $target_branch does not exist in $target_repo_dir."
-            fi
-        done
+        if ! git -C "$target_repo_dir" rev-parse --verify "origin/$release_branch" >/dev/null 2>&1; then
+            log "Validation failed: Branch $release_branch missing on remote for $target_repo_name."
+            validation_failures=$((validation_failures + 1))
+        fi
     done
 
-    log "Validation of results completed."
+    log "Validation complete: $validation_failures problem(s) found."
+}
+
+# Extracts $subdir_path out of the already-checked-out $temp_source_dir and
+# merges it into a worktree of the matching target repo on branch $branch,
+# then pushes. Records the outcome in successes/failures.
+process_branch_subdir() {
+    local branch="$1"
+    local subdir_path="$2"
+    local temp_source_dir="$3"
+
+    if [ ! -d "$temp_source_dir/$subdir_path" ]; then
+        failures["$branch:$subdir_path"]="Subdirectory does not exist in source"
+        return
+    fi
+
+    (cd "$temp_source_dir" && git filter-repo --subdirectory-filter "$subdir_path" --force --quiet)
+
+    local target_repo_name="${subdir_to_repo[$subdir_path]}"
+    local target_repo_dir="$TEMP_DIR/$target_repo_name"
+    if [ ! -d "$target_repo_dir" ]; then
+        failures["$branch:$subdir_path"]="Target directory does not exist"
+        return
+    fi
+
+    local worktree_dir
+    worktree_dir="$TEMP_DIR/worktree_${target_repo_name}_${branch//\//-}"
+    if git -C "$target_repo_dir" rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+        git -C "$target_repo_dir" worktree add --quiet -B "$branch" "$worktree_dir" "origin/$branch"
+    else
+        git -C "$target_repo_dir" worktree add --quiet -b "$branch" "$worktree_dir"
+    fi
+
+    local push_status=0
+    if ! (
+        cd "$worktree_dir"
+        git config pull.rebase false
+        git pull -X theirs "$temp_source_dir" "$branch" --allow-unrelated-histories --quiet
+        git push origin "$branch" --force --quiet
+    ); then
+        push_status=1
+    fi
+
+    git -C "$target_repo_dir" worktree remove --force "$worktree_dir"
+
+    if [ "$push_status" -ne 0 ]; then
+        log "FATAL: push to $target_repo_name failed (branch $branch). Aborting — likely an auth/permission problem affecting all remaining pushes."
+        exit 1
+    fi
+
+    successes["$branch:$subdir_path"]="Processed successfully"
 }
 
 # Define success and failure associative arrays
 declare -A successes failures
 
-# Function to cleanup, reset GIT_DIR, and report outcomes
+# Function to cleanup, reset GIT_DIR, and report a final summary
 cleanup() {
-    log "Cleanup started. Summarizing actions..."
-    echo "Successful operations:"
-    for key in "${!successes[@]}"; do
-        echo "$key: ${successes[$key]}"
-    done
-
-    echo "Failed operations:"
-    for key in "${!failures[@]}"; do
-        echo "$key: ${failures[$key]}"
-    done
+    echo
+    echo "===== Summary ====="
+    echo "Succeeded: ${#successes[@]}   Failed: ${#failures[@]}"
+    if [ "${#failures[@]}" -gt 0 ]; then
+        echo "Failures:"
+        for key in "${!failures[@]}"; do
+            echo "  $key: ${failures[$key]}"
+        done
+    fi
+    echo "===================="
     unset GIT_DIR
-    rm -rf "$TEMP_DIR"
-    log "Cleanup complete."
+    [ -n "${TEMP_DIR:-}" ] && rm -rf "$TEMP_DIR"
 }
 trap cleanup EXIT
 
-# Define the source repository and target repositories using HTTPS URLs
-SOURCE_REPO="https://github.com/UiPath-Services/StudioTemplates.git"
-REPO1="https://x-access-token:$GITHUB_TOKEN@github.com/rpapub/REFramework-VB-legacy.git"
-REPO2="https://x-access-token:$GITHUB_TOKEN@github.com/rpapub/REFramework-CSharp-legacy.git"
-REPO3="https://x-access-token:$GITHUB_TOKEN@github.com/rpapub/REFramework-VB-Windows.git"
-REPO4="https://x-access-token:$GITHUB_TOKEN@github.com/rpapub/REFramework-CSharp-Windows.git"
+if [ ! -f "$CONFIG_FILE" ]; then
+    log "FATAL: config file not found at $CONFIG_FILE"
+    exit 1
+fi
 
-# Define subdirectories and their corresponding target repos
-declare -A subdirs
-subdirs["REFramework/contentFiles/any/any/pt0/VisualBasic"]="REFramework-VB-legacy"
-subdirs["REFramework/contentFiles/any/any/pt1/CSharp"]="REFramework-CSharp-legacy"
-subdirs["REFramework/contentFiles/any/any/pt2/VisualBasic"]="REFramework-VB-Windows"
-subdirs["REFramework/contentFiles/any/any/pt3/CSharp"]="REFramework-CSharp-Windows"
+GITHUB_TOKEN=$(echo "${GITHUB_TOKEN:-}" | xargs) #trim whitespace
+
+# Fail fast if the token can't authenticate, before cloning/filtering anything
+log "Verifying GitHub token authentication..."
+auth_check=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/user)
+if [ "$auth_check" != "200" ]; then
+    log "FATAL: GitHub token authentication failed (HTTP $auth_check). Check GITHUB_TOKEN / secret validity."
+    exit 1
+fi
+log "Token authentication OK."
+
+SOURCE_REPO="$(jq -r '.source_repo' "$CONFIG_FILE")"
+TARGET_OWNER="$(jq -r '.target_owner' "$CONFIG_FILE")"
+
+# Map each vendor subdir to the target repo it gets extracted into, per
+# extraction-config.json (adding a variant is now a config change, not code).
+declare -A subdir_to_repo
+while IFS=$'\t' read -r subdir_path repo_name; do
+    subdir_to_repo["$subdir_path"]="$repo_name"
+done < <(jq -r '.mappings[] | [.subdir, .repo] | @tsv' "$CONFIG_FILE")
 
 # Create a temporary working directory
 TEMP_DIR=$(mktemp -d)
@@ -117,92 +170,27 @@ log "Created temporary directory at: $TEMP_DIR"
 
 git config --global credential.helper store
 echo "https://x-access-token:$GITHUB_TOKEN@github.com" >~/.git-credentials
-GITHUB_TOKEN=$(echo $GITHUB_TOKEN | xargs) #trim whitespace
 
-# Clone the target repositories using SSH URLs
-log "Cloning target repositories into $TEMP_DIR using HTTPS URLs..."
-git clone --quiet $REPO1 "$TEMP_DIR/REFramework-VB-legacy"
-git clone --quiet $REPO2 "$TEMP_DIR/REFramework-CSharp-legacy"
-git clone --quiet $REPO3 "$TEMP_DIR/REFramework-VB-Windows"
-git clone --quiet $REPO4 "$TEMP_DIR/REFramework-CSharp-Windows"
+# Clone the target repositories
+log "Cloning target repositories into $TEMP_DIR..."
+for target_repo_name in $(printf '%s\n' "${subdir_to_repo[@]}" | sort -u); do
+    git clone --quiet "https://x-access-token:$GITHUB_TOKEN@github.com/$TARGET_OWNER/$target_repo_name.git" "$TEMP_DIR/$target_repo_name"
+done
 log "All target repositories cloned."
 
 # Process each release branch and subdirectory
 while read -r branch; do
-
     log "Processing branch $branch..."
 
-    for subdir in "${!subdirs[@]}"; do
-        log "Processing subdirectory $subdir for branch $branch..."
+    for subdir_path in "${!subdir_to_repo[@]}"; do
+        temp_source_dir="$TEMP_DIR/temp_source_${branch}_${subdir_path//\//-}"
+        git clone --quiet "$SOURCE_REPO" "$temp_source_dir"
+        git -C "$temp_source_dir" checkout --quiet "$branch"
 
-        # Clone the source repository into a temporary folder for this specific branch and subdirectory
-        temp_source_dir="$TEMP_DIR/temp_source_${branch}_${subdir//\//-}"
-        git clone --quiet $SOURCE_REPO "$temp_source_dir"
-        cd "$temp_source_dir" || exit
+        process_branch_subdir "$branch" "$subdir_path" "$temp_source_dir"
 
-        # Checkout the specific branch
-        git checkout "$branch"
-
-        # Check if the subdirectory exists in this branch
-        log "Checking if $subdir exists in branch $branch"
-        if [ -d "$subdir" ]; then
-            log "Subdirectory $subdir exists in branch $branch. Processing..."
-            # Filter the repo to only include the specific subdirectory
-            git filter-repo --subdirectory-filter "$subdir" --force
-            log "Finished filtering the repo"
-
-            # Now handle the target repository
-            target_repo_dir="$TEMP_DIR/${subdirs[$subdir]}"
-            if [ -d "$target_repo_dir" ]; then
-                cd "$target_repo_dir" || exit
-
-                git config pull.rebase false
-
-                # Fetch the latest changes from the remote repository
-                git fetch origin --quiet
-
-                # Check if the branch already exists
-                if git rev-parse --verify "$branch" >/dev/null 2>&1; then
-                    # Checkout the branch
-                    git checkout "$branch" --quiet
-                else
-                    # Create a new branch
-                    git checkout -b "$branch" --quiet
-                fi
-
-                # Now pull the changes from the filtered source repository with the 'theirs' strategy
-                git pull -X theirs "$temp_source_dir" "$branch" --allow-unrelated-histories --quiet
-
-                # Push the changes to the remote target repository
-                log "Pushing branch $branch to the remote target repository..."
-                git push origin "$branch" --force --quiet
-
-                successes["$branch:$subdir"]="Processed successfully"
-            else
-                failures["$branch:$subdir"]="Target directory does not exist"
-            fi
-
-            # Cleanup: remove the temporary source directory
-            rm -rf "$temp_source_dir"
-        else
-            log "Subdirectory $subdir does not exist in branch $branch. Skipping..."
-            failures["$branch:$subdir"]="Subdirectory does not exist in source"
-        fi
+        rm -rf "$temp_source_dir"
     done
-done < <(git ls-remote --heads $SOURCE_REPO | grep 'refs/heads/release/v' | awk -F'refs/heads/' '{print $2}')
+done < <(git ls-remote --heads "$SOURCE_REPO" | grep 'refs/heads/release/v' | awk -F'refs/heads/' '{print $2}')
 
-# Call the validation function at the end of the script
 validate_results
-
-# Print successes and failures
-echo "Successful operations:"
-for key in "${!successes[@]}"; do
-    echo "$key: ${successes[$key]}"
-done
-
-echo "Failed operations:"
-for key in "${!failures[@]}"; do
-    echo "$key: ${failures[$key]}"
-done
-
-log "Script execution completed."
