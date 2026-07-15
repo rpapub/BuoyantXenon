@@ -98,23 +98,28 @@ process_branch_subdir() {
         git -C "$target_repo_dir" worktree add --quiet -b "$branch" "$worktree_dir"
     fi
 
-    local push_status=0
-    if ! (
-        cd "$worktree_dir"
-        git config pull.rebase false
-        git pull -X theirs "$temp_source_dir" "$branch" --allow-unrelated-histories --quiet
-        git push origin "$branch" --force --quiet
-    ); then
-        push_status=1
+    git -C "$worktree_dir" config pull.rebase false
+
+    # NOTE: deliberately not "if ! ( cd ...; cmd1; cmd2 )" - bash/POSIX ignore
+    # -e for a compound command whose result is inverted by "!", so a failing
+    # cmd1 would silently fall through to cmd2 running anyway. That exact bug
+    # previously let a failed merge fall through to `git push`, force-pushing
+    # a worktree still holding a DIFFERENT branch's content onto this branch.
+    # Explicit per-command checks avoid relying on that inherited option state.
+    if ! git -C "$worktree_dir" pull -X theirs "$temp_source_dir" "$branch" --allow-unrelated-histories --quiet; then
+        git -C "$worktree_dir" merge --abort 2>/dev/null || true
+        git -C "$target_repo_dir" worktree remove --force "$worktree_dir"
+        failures["$branch:$subdir_path"]="Merge conflict pulling filtered content into $branch"
+        return
     fi
 
-    git -C "$target_repo_dir" worktree remove --force "$worktree_dir"
-
-    if [ "$push_status" -ne 0 ]; then
+    if ! git -C "$worktree_dir" push origin "$branch" --force --quiet; then
+        git -C "$target_repo_dir" worktree remove --force "$worktree_dir"
         log "FATAL: push to $target_repo_name failed (branch $branch). Aborting — likely an auth/permission problem affecting all remaining pushes."
         exit 1
     fi
 
+    git -C "$target_repo_dir" worktree remove --force "$worktree_dir"
     successes["$branch:$subdir_path"]="Processed successfully"
 }
 
