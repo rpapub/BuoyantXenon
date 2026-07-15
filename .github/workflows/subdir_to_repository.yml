@@ -8,6 +8,8 @@ on:
 jobs:
   perform-subdir-to-repository:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Repository
@@ -32,7 +34,33 @@ jobs:
       - name: Run Subdir to Repository Script
         env:
           GITHUB_TOKEN: ${{ secrets.RPAPUB_REF_CONTENTS_RW_PAT }}
+          RUN_LOG_FILE: ${{ github.workspace }}/run-summary.txt
         run: |
           chmod +x subdir_to_repository.sh
           ./subdir_to_repository.sh
+
+      # Gives visibility into whether scheduled runs are actually happening -
+      # a disabled or silently-dormant schedule leaves no other trace. Pushes
+      # to a dedicated `log` branch on THIS repo (default GITHUB_TOKEN via the
+      # job's contents:write permission, not the cross-repo PAT).
+      - name: Append run log
+        if: always()
+        run: |
+          git fetch origin log:log 2>/dev/null || true
+          if git show-ref --verify --quiet refs/heads/log; then
+              git checkout --quiet log
+          else
+              git checkout --quiet --orphan log
+              git rm -rf . --quiet >/dev/null 2>&1 || true
+          fi
+
+          if [ -f run-summary.txt ]; then
+              cat run-summary.txt >> RUN_LOG.md
+          else
+              echo "$(date -u +"%Y-%m-%dT%H:%M:%SZ") no summary produced (script likely crashed before completing)" >> RUN_LOG.md
+          fi
+
+          git add RUN_LOG.md
+          git commit --quiet -m "Log run $(date -u +"%Y-%m-%d %H:%M:%SZ")"
+          git push --quiet origin log
 

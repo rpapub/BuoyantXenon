@@ -184,6 +184,14 @@ cleanup() {
         } >> "$GITHUB_STEP_SUMMARY"
     fi
 
+    # One compact line, appended by the caller (CI step) to the `log` branch's
+    # history - gives visibility into whether scheduled runs actually happen,
+    # since a disabled/silently-dormant schedule leaves no trace otherwise.
+    if [ -n "${RUN_LOG_FILE:-}" ]; then
+        printf '%s Succeeded=%d Failed=%d\n' \
+            "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "${#successes[@]}" "${#failures[@]}" >> "$RUN_LOG_FILE"
+    fi
+
     unset GIT_DIR
     [ -n "${TEMP_DIR:-}" ] && rm -rf "$TEMP_DIR"
 }
