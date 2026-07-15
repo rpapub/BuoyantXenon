@@ -153,7 +153,9 @@ process_branch_subdir() {
 # Define success and failure associative arrays
 declare -A successes failures
 
-# Function to cleanup, reset GIT_DIR, and report a final summary
+# Function to cleanup, reset GIT_DIR, and report a final summary - both to
+# the console and, on a GitHub Actions runner, as a proper Job Summary
+# (the markdown panel on the run's page, not just log text).
 cleanup() {
     echo
     echo "===== Summary ====="
@@ -165,6 +167,23 @@ cleanup() {
         done
     fi
     echo "===================="
+
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+        {
+            echo "## Subdir to Repository — run summary"
+            echo
+            echo "**Succeeded:** ${#successes[@]}  **Failed:** ${#failures[@]}"
+            if [ "${#failures[@]}" -gt 0 ]; then
+                echo
+                echo "| Branch:Subdir | Reason |"
+                echo "|---|---|"
+                for key in "${!failures[@]}"; do
+                    echo "| $key | ${failures[$key]} |"
+                done
+            fi
+        } >> "$GITHUB_STEP_SUMMARY"
+    fi
+
     unset GIT_DIR
     [ -n "${TEMP_DIR:-}" ] && rm -rf "$TEMP_DIR"
 }

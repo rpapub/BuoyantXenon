@@ -78,3 +78,13 @@ jobs:
               echo "$repo: ${repo_status[$repo]}"
           done
           echo "===================="
+
+          {
+              echo "## Update README — run summary"
+              echo
+              echo "| Repo | Status |"
+              echo "|---|---|"
+              for repo in "${repos[@]}"; do
+                  echo "| $repo | ${repo_status[$repo]} |"
+              done
+          } >> "$GITHUB_STEP_SUMMARY"
