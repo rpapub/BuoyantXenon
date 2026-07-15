@@ -77,7 +77,11 @@ process_branch_subdir() {
     local temp_source_dir="$3"
 
     if [ ! -d "$temp_source_dir/$subdir_path" ]; then
-        failures["$branch:$subdir_path"]="Subdirectory does not exist in source"
+        # Not an error - this variant genuinely doesn't exist in every vendor
+        # release branch (e.g. pt3/CSharp-Windows only exists from v23.4.0
+        # onward). Tracked separately from failures so the summary doesn't
+        # read as "15 things broke" when it's really "15 expected gaps".
+        skipped["$branch:$subdir_path"]="Subdirectory does not exist in source"
         return
     fi
 
@@ -150,8 +154,8 @@ process_branch_subdir() {
     successes["$branch:$subdir_path"]="Processed successfully"
 }
 
-# Define success and failure associative arrays
-declare -A successes failures
+# Define success/failure/skipped associative arrays
+declare -A successes failures skipped
 
 # Function to cleanup, reset GIT_DIR, and report a final summary - both to
 # the console and, on a GitHub Actions runner, as a proper Job Summary
@@ -159,11 +163,17 @@ declare -A successes failures
 cleanup() {
     echo
     echo "===== Summary ====="
-    echo "Succeeded: ${#successes[@]}   Failed: ${#failures[@]}"
+    echo "Succeeded: ${#successes[@]}   Failed: ${#failures[@]}   Skipped: ${#skipped[@]}"
     if [ "${#failures[@]}" -gt 0 ]; then
         echo "Failures:"
         for key in "${!failures[@]}"; do
             echo "  $key: ${failures[$key]}"
+        done
+    fi
+    if [ "${#skipped[@]}" -gt 0 ]; then
+        echo "Skipped (expected - variant not present in that vendor branch):"
+        for key in "${!skipped[@]}"; do
+            echo "  $key: ${skipped[$key]}"
         done
     fi
     echo "===================="
@@ -172,13 +182,23 @@ cleanup() {
         {
             echo "## Subdir to Repository — run summary"
             echo
-            echo "**Succeeded:** ${#successes[@]}  **Failed:** ${#failures[@]}"
+            echo "**Succeeded:** ${#successes[@]}  **Failed:** ${#failures[@]}  **Skipped:** ${#skipped[@]}"
             if [ "${#failures[@]}" -gt 0 ]; then
                 echo
+                echo "### Failures"
                 echo "| Branch:Subdir | Reason |"
                 echo "|---|---|"
                 for key in "${!failures[@]}"; do
                     echo "| $key | ${failures[$key]} |"
+                done
+            fi
+            if [ "${#skipped[@]}" -gt 0 ]; then
+                echo
+                echo "### Skipped (expected)"
+                echo "| Branch:Subdir | Reason |"
+                echo "|---|---|"
+                for key in "${!skipped[@]}"; do
+                    echo "| $key | ${skipped[$key]} |"
                 done
             fi
         } >> "$GITHUB_STEP_SUMMARY"
@@ -188,8 +208,8 @@ cleanup() {
     # history - gives visibility into whether scheduled runs actually happen,
     # since a disabled/silently-dormant schedule leaves no trace otherwise.
     if [ -n "${RUN_LOG_FILE:-}" ]; then
-        printf '%s Succeeded=%d Failed=%d\n' \
-            "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "${#successes[@]}" "${#failures[@]}" >> "$RUN_LOG_FILE"
+        printf '%s Succeeded=%d Failed=%d Skipped=%d\n' \
+            "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "${#successes[@]}" "${#failures[@]}" "${#skipped[@]}" >> "$RUN_LOG_FILE"
     fi
 
     unset GIT_DIR
