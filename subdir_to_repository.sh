@@ -164,6 +164,24 @@ while IFS=$'\t' read -r subdir_path repo_name; do
     subdir_to_repo["$subdir_path"]="$repo_name"
 done < <(jq -r '.mappings[] | [.subdir, .repo] | @tsv' "$CONFIG_FILE")
 
+# Fail fast if the token can authenticate but still lacks push access to any
+# target repo — a valid token for the wrong identity/permissions produces a
+# 403 on the first push otherwise, after all the clone/filter work is done.
+log "Verifying push access to target repos..."
+missing_push_access=()
+for target_repo_name in $(printf '%s\n' "${subdir_to_repo[@]}" | sort -u); do
+    push_access=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+        "https://api.github.com/repos/$TARGET_OWNER/$target_repo_name" | jq -r '.permissions.push // false')
+    if [ "$push_access" != "true" ]; then
+        missing_push_access+=("$TARGET_OWNER/$target_repo_name")
+    fi
+done
+if [ "${#missing_push_access[@]}" -gt 0 ]; then
+    log "FATAL: GITHUB_TOKEN lacks push access to: ${missing_push_access[*]}"
+    exit 1
+fi
+log "Push access confirmed for all target repos."
+
 # Create a temporary working directory
 TEMP_DIR=$(mktemp -d)
 log "Created temporary directory at: $TEMP_DIR"
