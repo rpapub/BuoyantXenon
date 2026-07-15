@@ -26,20 +26,20 @@ jobs:
           repos=("rpapub/REFramework-VB-legacy" "rpapub/REFramework-CSharp-legacy" "rpapub/REFramework-VB-Windows" "rpapub/REFramework-CSharp-Windows")
           PRE_COMMENT="<!-- START OF AUTO-GENERATED CONTENT -->"
           POST_COMMENT="<!-- END OF AUTO-GENERATED CONTENT -->"
+          declare -A repo_status
           for repo in "${repos[@]}"; do
-              echo "Updating README for $repo"
-              git clone https://x-access-token:$GITHUB_TOKEN@github.com/$repo "$(basename $repo)"
-              cd "$(basename $repo)"
-              git checkout readme || git checkout -b readme
+              git clone --quiet "https://x-access-token:$GITHUB_TOKEN@github.com/$repo" "$(basename "$repo")"
+              cd "$(basename "$repo")"
+              git checkout --quiet readme || git checkout --quiet -b readme
               branches=$(git branch -r | grep 'release/v')
-              echo $branches
-              
+
               new_content=""
+              branch_count=0
               for branch in $branches; do
                   branch_name="${branch#*/}"
                   new_content+="- [$branch_name](https://github.com/$repo/tree/$branch_name)\n"
+                  branch_count=$((branch_count + 1))
               done
-              echo $new_content
 
               # Find the line numbers of the comment markers
               start_line=$(grep -n "$PRE_COMMENT" README.md | cut -d: -f1)
@@ -50,7 +50,7 @@ jobs:
                   # Extract and store the content before and after the markers
                   head -n "$((start_line - 1))" README.md > README.tmp
                   tail -n "+$((end_line + 1))" README.md >> README.tmp
-          
+
                   # Recreate README.md with the new content between the markers
                   mv README.tmp README.md
                   echo "$PRE_COMMENT" >> README.md
@@ -62,11 +62,19 @@ jobs:
 
               git add README.md
               if git diff --staged --quiet; then
-                  echo "No changes to commit."
+                  repo_status["$repo"]="no changes ($branch_count branches)"
               else
                   COMMIT_MSG="Update README with vendor UiPath's release branches - commit $(date +"%Y-%m-%d")"
-                  git commit -m "$COMMIT_MSG"
-                  git push -u origin readme
+                  git commit --quiet -m "$COMMIT_MSG"
+                  git push --quiet -u origin readme
+                  repo_status["$repo"]="updated ($branch_count branches)"
               fi
               cd ..
           done
+
+          echo
+          echo "===== Summary ====="
+          for repo in "${repos[@]}"; do
+              echo "$repo: ${repo_status[$repo]}"
+          done
+          echo "===================="
