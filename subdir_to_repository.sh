@@ -83,6 +83,19 @@ process_branch_subdir() {
 
     (cd "$temp_source_dir" && git filter-repo --subdirectory-filter "$subdir_path" --force --quiet)
 
+    # Vendor commits UiPath Studio's generated cache files with no .gitignore
+    # covering them (see gitignore-templates/*.gitignore, vendored from
+    # https://github.com/rpapub/uipath-gitignore). Untracking them post-merge
+    # doesn't stick - the next sync sees "we deleted it, vendor modified it"
+    # and hits the same modify/delete conflict again. Strip them out of the
+    # vendor history itself, before it ever reaches the merge.
+    (cd "$temp_source_dir" && git filter-repo --invert-paths \
+        --path .local/AllDependencies.json \
+        --path .local/PackageCache.json \
+        --path .local/db/references.db \
+        --path .local/nuget.cache \
+        --force --quiet)
+
     local target_repo_name="${subdir_to_repo[$subdir_path]}"
     local target_repo_dir="$TEMP_DIR/$target_repo_name"
     if [ ! -d "$target_repo_dir" ]; then
@@ -111,6 +124,20 @@ process_branch_subdir() {
         git -C "$target_repo_dir" worktree remove --force "$worktree_dir"
         failures["$branch:$subdir_path"]="Merge conflict pulling filtered content into $branch"
         return
+    fi
+
+    # Vendor commits UiPath Studio's generated cache files (.local/*) with no
+    # .gitignore covering them - that's the actual source of most merge
+    # conflicts above. Apply the right template per variant and untrack
+    # anything it now covers, so consumers of these repos never re-commit it.
+    local gitignore_rel="${subdir_to_gitignore[$subdir_path]:-}"
+    if [ -n "$gitignore_rel" ] && [ -f "$SCRIPT_DIR/$gitignore_rel" ]; then
+        cp "$SCRIPT_DIR/$gitignore_rel" "$worktree_dir/.gitignore"
+        git -C "$worktree_dir" rm -r --cached --quiet . >/dev/null
+        git -C "$worktree_dir" add -A
+        if ! git -C "$worktree_dir" diff --staged --quiet; then
+            git -C "$worktree_dir" commit --quiet -m "Apply UiPath .gitignore, untrack generated cache files"
+        fi
     fi
 
     if ! git -C "$worktree_dir" push origin "$branch" --force --quiet; then
@@ -164,10 +191,11 @@ TARGET_OWNER="$(jq -r '.target_owner' "$CONFIG_FILE")"
 
 # Map each vendor subdir to the target repo it gets extracted into, per
 # extraction-config.json (adding a variant is now a config change, not code).
-declare -A subdir_to_repo
-while IFS=$'\t' read -r subdir_path repo_name; do
+declare -A subdir_to_repo subdir_to_gitignore
+while IFS=$'\t' read -r subdir_path repo_name gitignore_rel; do
     subdir_to_repo["$subdir_path"]="$repo_name"
-done < <(jq -r '.mappings[] | [.subdir, .repo] | @tsv' "$CONFIG_FILE")
+    subdir_to_gitignore["$subdir_path"]="$gitignore_rel"
+done < <(jq -r '.mappings[] | [.subdir, .repo, (.gitignore // "")] | @tsv' "$CONFIG_FILE")
 
 # Fail fast if the token can authenticate but still lacks push access to any
 # target repo — a valid token for the wrong identity/permissions produces a

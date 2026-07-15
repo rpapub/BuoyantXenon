@@ -10,15 +10,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install git-filter-repo
-        run: |
-            pip install --user git-filter-repo==2.47.0
-            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
       - name: Checkout Repository
         uses: actions/checkout@v4
         env:
           GITHUB_TOKEN: ${{ secrets.RPAPUB_REF_CONTENTS_RW_PAT }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install git-filter-repo (pinned via pyproject.toml)
+        run: |
+          uv sync --locked
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Configure Git
         run: |
